@@ -11,10 +11,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::borrow::Cow;
 use std::i64;
+use std::str;
 
 use super::{EvalContext, Result, ScalarFunc};
 use coprocessor::codec::Datum;
+
+extern crate hlua;
+use self::hlua::Lua;
 
 impl ScalarFunc {
     #[inline]
@@ -33,6 +38,22 @@ impl ScalarFunc {
             },
         }
     }
+
+    #[inline]
+    pub fn eval_lua<'a, 'b: 'a>(
+        &'b self,
+        ctx: &mut EvalContext,
+        row: &[Datum],
+    ) -> Result<Option<Cow<'a, [u8]>>> {
+        let mut lua = Lua::new(); // mutable is mandatory
+        let d = try_opt!(self.children[0].eval_string(ctx, row));
+        let script = str::from_utf8(d.as_ref()).unwrap();
+        let x = try_opt!(self.children[1].eval_int(ctx, row)) as i32;
+        lua.set("x", x);
+        lua.execute::<()>(script).unwrap();
+        let x: String = lua.get("x").unwrap();
+        Ok(Some(Cow::Owned(x.into_bytes())))
+    }
 }
 
 #[cfg(test)]
@@ -45,6 +66,25 @@ mod tests {
     use std::str::FromStr;
     use std::sync::Arc;
     use tipb::expression::ScalarFuncSig;
+
+    #[test]
+    fn test_eval_lua() {
+        let cases: Vec<(&str, i32)> = vec![("x = x + 1", 2)];
+        let mut ctx = EvalContext::default();
+        for (input_str, res) in cases {
+            let input = datum_expr(Datum::Bytes(input_str.as_bytes().to_vec()));
+            let op = scalar_func_expr(
+                ScalarFuncSig::EvalLua,
+                &[input, datum_expr(Datum::I64(res as i64))],
+            );
+            let exp = Expression::build(&mut ctx, op);
+            println!("{:?}", exp);
+            let op = exp.unwrap();
+            let got = op.eval(&mut ctx, &[]).unwrap();
+            // let exp = Datum::Bytes(res.as_bytes().to_vec());
+            println!("{:?}", got);
+        }
+    }
 
     #[test]
     fn test_bit_count() {

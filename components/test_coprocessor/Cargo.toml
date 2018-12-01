@@ -13,4 +13,4 @@ futures = "0.1"
 git = "https://github.com/pingcap/kvproto.git"
 
 [dependencies.tipb]
-git = "https://github.com/pingcap/tipb.git"
+git = "https://github.com/TennyZhuang/tipb.git"

@@ -125,6 +125,7 @@ impl ScalarFunc {
             | ScalarFuncSig::TruncateDecimal
             | ScalarFuncSig::Trim2Args
             | ScalarFuncSig::Substring2Args
+            | ScalarFuncSig::EvalLua
             | ScalarFuncSig::SubstringBinary2Args => (2, 2),
 
             ScalarFuncSig::CastIntAsInt
@@ -932,6 +933,7 @@ dispatch_call! {
         Inet6Ntoa => inet6_ntoa,
         MD5 => md5,
         SHA1 => sha1,
+        EvalLua => eval_lua,
         SHA2 => sha2,
         Elt => elt,
         FromBase64 => from_base64,
@@ -1103,6 +1105,7 @@ mod tests {
                     ScalarFuncSig::LeftShift,
                     ScalarFuncSig::RightShift,
                     ScalarFuncSig::Pow,
+                    ScalarFuncSig::EvalLua,
                     ScalarFuncSig::TruncateInt,
                     ScalarFuncSig::TruncateReal,
                     ScalarFuncSig::TruncateDecimal,
