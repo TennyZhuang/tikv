@@ -2411,7 +2411,8 @@ impl Peer {
         send_msg.set_region_epoch(self.region().get_region_epoch().clone());
 
         let from_peer = self.peer.clone();
-        let to_peer = match self.get_peer_from_cache(msg.get_to()) {
+        let to = if msg.to_proxy { msg.proxy } else { msg.to };
+        let to_peer = match self.get_peer_from_cache(to) {
             Some(p) => p,
             None => {
                 warn!(
