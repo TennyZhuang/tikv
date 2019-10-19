@@ -121,6 +121,7 @@ impl PeerTicks {
 pub enum StoreTick {
     CompactCheck,
     PdStoreHeartbeat,
+    GetAllStores,
     SnapGc,
     CompactLockCf,
     ConsistencyCheck,
@@ -133,6 +134,7 @@ impl StoreTick {
         match self {
             StoreTick::CompactCheck => "compact_check",
             StoreTick::PdStoreHeartbeat => "pd_store_heartbeat",
+            StoreTick::GetAllStores => "get_all_stores",
             StoreTick::SnapGc => "snap_gc",
             StoreTick::CompactLockCf => "compact_lock_cf",
             StoreTick::ConsistencyCheck => "consistency_check",

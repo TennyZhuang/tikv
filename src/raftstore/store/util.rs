@@ -14,6 +14,7 @@ use time::{Duration, Timespec};
 
 use super::peer_storage;
 use crate::raftstore::{Error, Result};
+use tikv_util::collections::HashMap;
 use tikv_util::time::monotonic_raw_now;
 use tikv_util::Either;
 
@@ -37,6 +38,35 @@ pub fn remove_peer(region: &mut metapb::Region, store_id: u64) -> Option<metapb:
         .iter()
         .position(|x| x.get_store_id() == store_id)
         .map(|i| region.mut_peers().remove(i))
+}
+
+// peers: (peer_id, peer_store_id)
+// locations: HashMap<store_id, datacenter>
+// return Vec<(group_id(from datacenter), Vec<peer_id>)>
+pub fn group_peers_by_store_location(
+    peers: &[(u64, u64)],
+    locations: &HashMap<u64, String>,
+) -> Vec<(u64, Vec<u64>)> {
+    let mut tmp: HashMap<String, Vec<u64>> = HashMap::default();
+    for location in locations.values() {
+        if tmp.get(location).is_none() {
+            tmp.insert(location.to_owned(), vec![]);
+        }
+    }
+    for (peer, store_id) in peers {
+        if let Some(location) = locations.get(store_id) {
+            let peers = tmp.get_mut(location).unwrap();
+            peers.push(*peer);
+        }
+    }
+    let mut entires = tmp.drain().collect::<Vec<_>>();
+    entires.sort_by(|a, b| a.0.cmp(&b.0));
+    // HACK: use index as group id
+    entires
+        .drain(..)
+        .enumerate()
+        .map(|(i, v)| (i as u64, v.1))
+        .collect::<Vec<_>>()
 }
 
 // a helper function to create peer easily.

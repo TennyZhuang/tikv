@@ -79,6 +79,7 @@ pub struct StoreInfo {
 pub struct StoreMeta {
     /// store id
     pub store_id: Option<u64>,
+    pub store_location: HashMap<u64, String>,
     /// region_end_key -> region_id
     pub region_ranges: BTreeMap<Vec<u8>, u64>,
     /// region_id -> region
@@ -107,6 +108,7 @@ impl StoreMeta {
     pub fn new(vote_capacity: usize) -> StoreMeta {
         StoreMeta {
             store_id: None,
+            store_location: HashMap::default(),
             region_ranges: BTreeMap::default(),
             regions: HashMap::default(),
             readers: HashMap::default(),
@@ -389,6 +391,7 @@ impl<'a, T: Transport, C: PdClient> StoreFsmDelegate<'a, T, C> {
         let t = SlowTimer::new();
         match tick {
             StoreTick::PdStoreHeartbeat => self.on_pd_store_heartbeat_tick(),
+            StoreTick::GetAllStores => self.on_get_all_stores(),
             StoreTick::SnapGc => self.on_snap_mgr_gc(),
             StoreTick::CompactLockCf => self.on_compact_lock_cf(),
             StoreTick::CompactCheck => self.on_compact_check_tick(),
@@ -442,6 +445,7 @@ impl<'a, T: Transport, C: PdClient> StoreFsmDelegate<'a, T, C> {
         self.register_cleanup_import_sst_tick();
         self.register_compact_check_tick();
         self.register_pd_store_heartbeat_tick();
+        self.register_get_all_stores_tick();
         self.register_compact_lock_cf_tick();
         self.register_snap_mgr_gc_tick();
         self.register_consistency_check_tick();
@@ -754,6 +758,7 @@ impl<T, C> RaftPollerBuilder<T, C> {
                 self.region_scheduler.clone(),
                 self.engines.clone(),
                 region,
+                &meta.store_location,
             ));
             if local_state.get_state() == PeerState::Merging {
                 info!("region is merging"; "region" => ?region, "store_id" => store_id);
@@ -791,6 +796,7 @@ impl<T, C> RaftPollerBuilder<T, C> {
                 self.region_scheduler.clone(),
                 self.engines.clone(),
                 &region,
+                &meta.store_location,
             )?;
             peer.schedule_applying_snapshot();
             meta.region_ranges
@@ -1409,6 +1415,7 @@ impl<'a, T: Transport, C: PdClient> StoreFsmDelegate<'a, T, C> {
             self.ctx.engines.clone(),
             region_id,
             target.clone(),
+            &meta.store_location,
         )?;
         // following snapshot may overlap, should insert into region_ranges after
         // snapshot is applied.
@@ -1736,6 +1743,21 @@ impl<'a, T: Transport, C: PdClient> StoreFsmDelegate<'a, T, C> {
             StoreTick::PdStoreHeartbeat,
             self.ctx.cfg.pd_store_heartbeat_tick_interval.0,
         );
+    }
+
+    fn register_get_all_stores_tick(&self) {
+        self.ctx
+            .schedule_store_tick(StoreTick::GetAllStores, Duration::from_secs(5));
+    }
+
+    fn on_get_all_stores(&mut self) {
+        if let Ok(mut stores) = self.ctx.pd_client.get_all_stores(true) {
+            let mut guard = self.ctx.store_meta.lock().unwrap();
+            guard.store_location = stores
+                .drain(..)
+                .map(|s| (s.id, s.region))
+                .collect::<HashMap<u64, String>>();
+        }
     }
 
     fn register_snap_mgr_gc_tick(&self) {

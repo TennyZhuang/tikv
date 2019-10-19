@@ -22,9 +22,10 @@ use kvproto::raft_serverpb::{
 };
 use protobuf::Message;
 use raft::eraftpb::{self, ConfChangeType, EntryType, MessageType};
+use raft::group::ProxyStrategy;
 use raft::{
-    self, Progress, ProgressState, RawNode, Ready, SnapshotStatus, StateRole, INVALID_INDEX,
-    NO_LIMIT,
+    self, GroupsConfig, Progress, ProgressState, RawNode, Ready, SnapshotStatus, StateRole,
+    INVALID_INDEX, NO_LIMIT,
 };
 use time::Timespec;
 use uuid::Uuid;
@@ -344,6 +345,7 @@ pub struct Peer {
 impl Peer {
     pub fn new(
         store_id: u64,
+        store_location: &HashMap<u64, String>,
         cfg: &Config,
         sched: Scheduler<RegionTask>,
         engines: Engines,
@@ -359,7 +361,15 @@ impl Peer {
         let ps = PeerStorage::new(engines.clone(), region, sched, peer.get_id(), tag.clone())?;
 
         let applied_index = ps.applied_index();
-
+        let peers = region
+            .get_peers()
+            .iter()
+            .map(|peer| (peer.id, peer.store_id))
+            .collect::<Vec<_>>();
+        let group_config = GroupsConfig::new(
+            util::group_peers_by_store_location(&peers, store_location),
+            ProxyStrategy::default(),
+        );
         let raft_cfg = raft::Config {
             id: peer.get_id(),
             election_tick: cfg.raft_election_timeout_ticks,
@@ -372,6 +382,8 @@ impl Peer {
             check_quorum: true,
             skip_bcast_commit: true,
             pre_vote: cfg.prevote,
+            follower_delegate: true,
+            groups: group_config,
             ..Default::default()
         };
 
@@ -713,7 +725,7 @@ impl Peer {
 
     #[inline]
     pub fn get_store(&self) -> &PeerStorage {
-        self.raft_group.get_store()
+        self.raft_group.store()
     }
 
     #[inline]
@@ -734,7 +746,7 @@ impl Peer {
 
     #[inline]
     pub fn get_pending_snapshot(&self) -> Option<&eraftpb::Snapshot> {
-        self.raft_group.get_snap()
+        self.raft_group.snap()
     }
 
     fn add_ready_metric(&self, ready: &Ready, metrics: &mut RaftReadyMetrics) {
@@ -852,7 +864,7 @@ impl Peer {
         }
 
         // Insert heartbeats in case that some peers never response heartbeats.
-        let region = self.raft_group.get_store().region();
+        let region = self.raft_group.store().region();
         for peer in region.get_peers() {
             self.peer_heartbeats
                 .entry(peer.get_id())
@@ -937,7 +949,7 @@ impl Peer {
             if self.peers_start_pending_time[i].0 != peer_id {
                 continue;
             }
-            let truncated_idx = self.raft_group.get_store().truncated_index();
+            let truncated_idx = self.raft_group.store().truncated_index();
             if let Some(progress) = self.raft_group.raft.prs().get(peer_id) {
                 if progress.matched >= truncated_idx {
                     let (_, pending_after) = self.peers_start_pending_time.swap_remove(i);

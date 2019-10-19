@@ -27,8 +27,9 @@ use kvproto::raft_serverpb::{
 use pd_client::PdClient;
 use protobuf::Message;
 use raft::eraftpb::{ConfChangeType, MessageType};
-use raft::{self, SnapshotStatus, INVALID_INDEX, NO_LIMIT};
+use raft::{self, GroupsConfig, SnapshotStatus, INVALID_INDEX, NO_LIMIT};
 use raft::{Ready, StateRole};
+use tikv_util::collections::HashMap;
 use tikv_util::mpsc::{self, LooseBoundedSender, Receiver};
 use tikv_util::time::duration_to_sec;
 use tikv_util::worker::{Scheduler, Stopped};
@@ -129,6 +130,7 @@ impl PeerFsm {
         sched: Scheduler<RegionTask>,
         engines: Engines,
         region: &metapb::Region,
+        store_locations: &HashMap<u64, String>,
     ) -> Result<(LooseBoundedSender<PeerMsg>, Box<PeerFsm>)> {
         let meta_peer = match util::find_peer(region, store_id) {
             None => {
@@ -150,7 +152,15 @@ impl PeerFsm {
         Ok((
             tx,
             Box::new(PeerFsm {
-                peer: Peer::new(store_id, cfg, sched, engines, region, meta_peer)?,
+                peer: Peer::new(
+                    store_id,
+                    store_locations,
+                    cfg,
+                    sched,
+                    engines,
+                    region,
+                    meta_peer,
+                )?,
                 tick_registry: PeerTicks::empty(),
                 missing_ticks: 0,
                 group_state: GroupState::Ordered,
@@ -172,6 +182,7 @@ impl PeerFsm {
         engines: Engines,
         region_id: u64,
         peer: metapb::Peer,
+        store_locations: &HashMap<u64, String>,
     ) -> Result<(LooseBoundedSender<PeerMsg>, Box<PeerFsm>)> {
         // We will remove tombstone key when apply snapshot
         info!(
@@ -187,7 +198,15 @@ impl PeerFsm {
         Ok((
             tx,
             Box::new(PeerFsm {
-                peer: Peer::new(store_id, cfg, sched, engines, &region, peer)?,
+                peer: Peer::new(
+                    store_id,
+                    store_locations,
+                    cfg,
+                    sched,
+                    engines,
+                    &region,
+                    peer,
+                )?,
                 tick_registry: PeerTicks::empty(),
                 missing_ticks: 0,
                 group_state: GroupState::Ordered,
@@ -1446,7 +1465,11 @@ impl<'a, T: Transport, C: PdClient> PeerFsmDelegate<'a, T, C> {
         }
         {
             let mut meta = self.ctx.store_meta.lock().unwrap();
-            meta.set_region(&self.ctx.coprocessor_host, cp.region, &mut self.fsm.peer);
+            meta.set_region(
+                &self.ctx.coprocessor_host,
+                cp.region.clone(),
+                &mut self.fsm.peer,
+            );
         }
 
         let peer_id = cp.peer.get_id();
@@ -1466,6 +1489,7 @@ impl<'a, T: Transport, C: PdClient> PeerFsmDelegate<'a, T, C> {
                 }
                 self.fsm.peer.recent_conf_change_time = now;
                 self.fsm.peer.insert_peer_cache(peer);
+                // Update group config
             }
             ConfChangeType::RemoveNode => {
                 // Remove this peer from cache.
@@ -1481,6 +1505,20 @@ impl<'a, T: Transport, C: PdClient> PeerFsmDelegate<'a, T, C> {
             }
             ConfChangeType::BeginMembershipChange | ConfChangeType::FinalizeMembershipChange => unimplemented!(),
         }
+        let new_config = {
+            let group_config = self.fsm.peer.raft_group.raft.groups().meta.clone();
+            let store_meta = self.ctx.store_meta.lock().unwrap();
+            // Region have been updated in exec_change_peer
+            let peers = cp
+                .region
+                .get_peers()
+                .iter()
+                .map(|peer| (peer.id, peer.store_id))
+                .collect::<Vec<_>>();
+            let inner = util::group_peers_by_store_location(&peers, &store_meta.store_location);
+            GroupsConfig::new(inner, group_config.strategy())
+        };
+        self.fsm.peer.raft_group.update_groups_config(new_config);
 
         // In pattern matching above, if the peer is the leader,
         // it will push the change peer into `peers_start_pending_time`
@@ -1618,6 +1656,7 @@ impl<'a, T: Transport, C: PdClient> PeerFsmDelegate<'a, T, C> {
                 self.ctx.region_scheduler.clone(),
                 self.ctx.engines.clone(),
                 &new_region,
+                &meta.store_location,
             ) {
                 Ok((sender, new_peer)) => (sender, new_peer),
                 Err(e) => {
