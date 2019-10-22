@@ -3,6 +3,7 @@
 mod debug;
 mod kv;
 mod proxy;
+mod region_cache;
 
 pub use self::debug::Service as DebugService;
 pub use self::kv::Service as KvService;
