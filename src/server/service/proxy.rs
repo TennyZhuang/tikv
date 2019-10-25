@@ -10,7 +10,6 @@ use kvproto::tikvpb::TikvClient;
 use grpcio::{ChannelBuilder, Environment, RpcContext, UnarySink};
 
 use futures::future;
-use futures::future::Either;
 use futures::prelude::*;
 use std::sync::Arc;
 
