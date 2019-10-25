@@ -249,8 +249,8 @@ fn run_raft_server(pd_client: RpcClient, cfg: &TiKvConfig, security_mgr: Arc<Sec
         raft_router,
         resolver.clone(),
         snap_mgr.clone(),
-        pd_client.clone(),
         gc_worker.clone(),
+        pd_client.clone(),
     )
     .unwrap_or_else(|e| fatal!("failed to create server: {}", e));
 
@@ -285,7 +285,13 @@ fn run_raft_server(pd_client: RpcClient, cfg: &TiKvConfig, security_mgr: Arc<Sec
     let trans = server.transport();
 
     // Create node.
-    let mut node = Node::new(system, &server_cfg, &cfg.raft_store, &cfg.region, pd_client.clone());
+    let mut node = Node::new(
+        system,
+        &server_cfg,
+        &cfg.raft_store,
+        &cfg.region,
+        pd_client.clone(),
+    );
 
     // Create CoprocessorHost.
     let mut coprocessor_host = CoprocessorHost::new(cfg.coprocessor.clone(), router);
