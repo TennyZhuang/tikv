@@ -49,6 +49,14 @@ impl<S: StoreAddrResolver + 'static, P: PdClient + 'static> Service<S, P> {
             clients: Arc::new(RwLock::new(HashMap::default())),
         }
     }
+
+    fn get_client(&self, store_id: u64) -> Option<TikvClient> {
+        let clients = self.clients.read().unwrap();
+        match clients.get(&store_id) {
+            Some(c) => Some(c.clone()),
+            None => None,
+        }
+    }
 }
 
 impl<S: StoreAddrResolver + 'static, P: PdClient + 'static> tikvpb::DcProxy for Service<S, P> {
@@ -64,13 +72,18 @@ impl<S: StoreAddrResolver + 'static, P: PdClient + 'static> tikvpb::DcProxy for 
             Index(u64),
         }
 
+        info!("GetCommittedIndexAndTs is called");
+        if req.get_ts_required() {
+            panic!("GetCommittedIndexAndTs ts_required currently not supported");
+        }
+
         let mut indices = Vec::new();
         for region_ctx in req.take_contexts().into_iter() {
             let store_id = region_ctx.get_peer().get_store_id();
-            let client = match self.clients.read().unwrap().get(&store_id).cloned() {
+            info!("getting connection for {}", store_id);
+            let client = match self.get_client(store_id) {
                 Some(c) => c,
                 None => {
-                    let mut clients = self.clients.write().unwrap();
                     let (cb, f) = paired_future_callback();
                     let addr = match self
                         .store_resolver
@@ -86,10 +99,17 @@ impl<S: StoreAddrResolver + 'static, P: PdClient + 'static> tikvpb::DcProxy for 
                             return;
                         }
                     };
-                    let env = Arc::new(Environment::new(1));
+                    info!("GetCommittedIndexAndTs resolved {} to {}", store_id, addr);
+                    let env = Arc::new(Environment::new(4));
                     let channel = ChannelBuilder::new(env).connect(&addr);
                     let c = TikvClient::new(channel);
+                    info!(
+                        "GetCommittedIndexAndTs connected to [{}, {}]",
+                        store_id, addr
+                    );
+                    let mut clients = self.clients.write().unwrap();
                     clients.insert(store_id, c.clone());
+                    drop(clients);
                     c
                 }
             };
@@ -137,9 +157,13 @@ impl<S: StoreAddrResolver + 'static, P: PdClient + 'static> tikvpb::DcProxy for 
             });
         let h = self.pool.spawn_handle(f);
         ctx.spawn(h.and_then(|resp| {
-            sink.success(resp).map_err(|e| {
-                warn!("GetCommittedIndexAndTs sends response fail: {:?}", e);
-            })
+            sink.success(resp)
+                .map_err(|e| {
+                    warn!("GetCommittedIndexAndTs sends response fail: {:?}", e);
+                })
+                .map(|_| {
+                    info!("GetCommittedIndexAndTs sends response success");
+                })
         }));
     }
 
