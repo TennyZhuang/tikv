@@ -382,7 +382,7 @@ impl Peer {
             check_quorum: true,
             skip_bcast_commit: true,
             pre_vote: cfg.prevote,
-            follower_delegate: true,
+            follower_delegate: cfg.follower_delegate,
             groups: group_config,
             ..Default::default()
         };
