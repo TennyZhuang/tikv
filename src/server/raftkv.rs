@@ -188,7 +188,7 @@ impl ApplyObserver for KvApplyObserver {
     fn on_applied_index_change(&self, r: &Region, applied: Option<u64>) {
         let rid = r.get_id();
         let applied = applied.unwrap();
-        info!("{} applied index changed to {}", rid, applied);
+        debug!("{} applied index changed to {}", rid, applied);
 
         let rq = self.get_quque(rid);
         let mut rq_locked = rq.0.lock().unwrap();
@@ -486,7 +486,7 @@ impl<S: RaftStoreRouter> Engine for RaftKv<S> {
         applied_index: u64,
         cb: Callback<Self::Snap>,
     ) -> kv::Result<()> {
-        error!(
+        debug!(
             "async_snapshot_on_follower, region: {}, epoch: {:?}",
             ctx.get_region_id(),
             ctx.get_region_epoch(),
