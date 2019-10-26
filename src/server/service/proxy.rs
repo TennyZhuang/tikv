@@ -164,67 +164,170 @@ impl<S: StoreAddrResolver + 'static, P: PdClient + 'static> tikvpb::DcProxy for 
 
     fn transaction_write(
         &mut self,
-        _ctx: RpcContext<'_>,
-        _req: TransactionWriteRequest,
-        _sink: UnarySink<TransactionWriteResponse>,
+        ctx: RpcContext<'_>,
+        req: TransactionWriteRequest,
+        sink: UnarySink<TransactionWriteResponse>,
     ) {
-        unimplemented!();
-        /***********
-            let mut fs1 = Vec::with_capacity(req.get_pre_writes().len());
-            let mut fs2 = Vec::with_capacity(req.get_pre_writes().len());
-            let pre_writes = req.get_pre_writes().to_vec();
+        enum Res {
+            GrpcError((GrpcError, u64)),
+            RegionError(errorpb::Error),
+            NoError(),
+        }
+        info!("Start transaction write!");
+        // unimplemented!();
+            let mut prewrite_futures = Vec::new();
+            let mut commit_futures = Vec::new();
+            let mut transaction_write_resp = TransactionWriteResponse::default();
+            let pre_writes = req.get_pre_writes().clone().to_vec();
             for pre_write_req in pre_writes.clone() {
                 let proxy_ctx = pre_write_req.get_context();
                 let store_id = proxy_ctx.get_peer().get_store_id();
-                let (cb, f) = paired_future_callback();
-                let res = self.store_resolver.resolve(store_id, cb);
-                let future = AndThenWith::new(res, f.map_err(Error::from))
-                    .and_then(move |addr| {
-                        let addr = addr.unwrap(); // FIXME: unwrap
-                        let env = Arc::new(Environment::new(1));
+                let need_prewrite = pre_write_req.get_need();
+                if !need_prewrite {
+                    continue;
+                }
+                info!("getting connection for {}", store_id);
+                // get cache client
+                let client = match self.get_client(store_id) {
+                    Some(c) => c,
+                    None => {
+                        let (cb, f) = paired_future_callback();
+                        let addr = match self
+                            .store_resolver
+                            .resolve(store_id, cb)
+                            .and_then(|_| f.wait().unwrap())
+                        {
+                            Ok(a) => a,
+                            Err(e) => {
+                                warn!("proxy pre write resolve {} fail: {:?}", store_id, e);
+                                let code = RpcStatusCode::INTERNAL;
+                                let status = RpcStatus::new(code, Some(format!("{}", e)));
+                                ctx.spawn(sink.fail(status).map_err(|_| ()));
+                                return;
+                            }
+                        };
+                        info!("proxy pre write resolved {} to {}", store_id, addr);
+                        let env = Arc::new(Environment::new(4));
                         let channel = ChannelBuilder::new(env).connect(&addr);
-                        let client = TikvClient::new(channel);
-                        client
-                            .kv_prewrite_async(&pre_write_req)
-                            .unwrap()
-                            .map_err(Error::from)
-                    })
-                    .map(|resp| resp.clone());
-                fs1.push(Box::new(future));
-            }
-            let f1 = future::join_all(fs1);
+                        let c = TikvClient::new(channel);
+                        info!(
+                            "proxy pre write connected to [{}, {}]",
+                            store_id, addr
+                        );
+                        let mut clients = self.clients.write().unwrap();
+                        clients.insert(store_id, c.clone());
+                        drop(clients);
+                        c
+                    }
+                };
 
-            for pre_write_req in pre_writes.clone() {
-                let proxy_ctx = pre_write_req.get_context();
+                let f = future::result(client.kv_prewrite_async(&pre_write_req))
+                        .flatten()
+                        .map(|resp| {
+                            return resp;
+                        })
+                        .or_else(move |e| future::ok::<_, ()>(PrewriteResponse::default()));
+                prewrite_futures.push(f);
+            }
+            let f = stream::futures_ordered(prewrite_futures)
+                    .collect()
+                    .and_then(|resp_vec| {
+                        let mut pre_write_resp_vec = Vec::new();
+                        for resp in resp_vec {
+                            if resp.has_region_error() || resp.get_errors().is_empty() {
+                                pre_write_resp_vec.push(resp);
+                            }
+                        }
+                        transaction_write_resp.set_pre_write_resps(protobuf::RepeatedField::from_vec(pre_write_resp_vec));
+                        Ok(transaction_write_resp)
+                    });
+            let h = self.pool.spawn_handle(f);
+            ctx.spawn(h.and_then(|resp| {
+                sink.success(resp)
+                    .map_err(|e| {
+                        warn!("proxy pre write sends response fail: {:?}", e);
+                    })
+                    .map(|_| {
+                        info!("proxy pre write sends response success");
+                    })
+                }));
+            
+            // commit
+            let len = pre_writes.len();
+            for i in 0..len {
+                let pre_write_req = pre_writes[i];
+                let proxy_ctx = pre_write_req.get_context().clone();
+                let start_version = pre_write_req.get_start_version().clone();
+                // TODO get commit version from pd
+                let mutations = pre_write_req.get_mutations().clone();
+                let mut keys: Vec<Vec<u8>> = Vec::new();
+                for m in mutations {
+                    let k = m.get_key().clone().to_vec();
+                    keys.push(k);
+                }
                 let store_id = proxy_ctx.get_peer().get_store_id();
-                let (cb, f) = paired_future_callback();
-                let res = self.store_resolver.resolve(store_id, cb);
-                let commit_future = AndThenWith::new(res, f.map_err(Error::from))
-                    .and_then(move |addr| {
-                        let addr = addr.unwrap(); // FIXME: unwrap
-                        let env = Arc::new(Environment::new(1));
+                // get cache client
+                let client = match self.get_client(store_id) {
+                    Some(c) => c,
+                    None => {
+                        let (cb, f) = paired_future_callback();
+                        let addr = match self
+                            .store_resolver
+                            .resolve(store_id, cb)
+                            .and_then(|_| f.wait().unwrap()){
+                                Ok(a) => a,
+                                Err(e) => {
+                                    warn!("proxy commit resolve {} fail: {:?}", store_id, e);
+                                    let code = RpcStatusCode::INTERNAL;
+                                    let status = RpcStatus::new(code, Some(format!("{}", e)));
+                                    ctx.spawn(sink.fail(status).map_err(|_| ()));
+                                    return;
+                                }
+                            };
+                        info!("proxy commit resolved {} to {}", store_id, addr);
+                        let env = Arc::new(Environment::new(4));
                         let channel = ChannelBuilder::new(env).connect(&addr);
-                        let client = TikvClient::new(channel);
-                        let commit_req = CommitRequest::default();
-                        client
-                            .kv_commit_async(&commit_req)
-                            .unwrap()
-                            .map_err(Error::from)
+                        let c = TikvClient::new(channel);
+                        info!(
+                            "proxy commit connected to [{}, {}]",
+                            store_id, addr
+                        );
+                        let mut clients = self.clients.write().unwrap();
+                        clients.insert(store_id, c.clone());
+                        drop(clients);
+                        c
+                    }
+                };
+                let commit_req = CommitRequest::new();
+                commit_req.set_context(proxy_ctx.clone());
+                commit_req.set_start_version(start_version);
+                commit_req.set_keys(protobuf::RepeatedField::from_vec(keys));
+                let f = future::result(client.kv_commit_async(&commit_req))
+                    .flatten()
+                    .map(|resp| {
+                       return resp;
                     })
-                    .map(|resp| resp.clone());
-                fs2.push(Box::new(commit_future));
+                    .or_else(move |e| future::ok::<_, ()>(CommitResponse::default()));
+                if i == 0 {
+                    // only return first commit resp
+                    f.wait()
+                    .and_then(|resp| {
+                        transaction_write_resp.set_commit_resp(resp.clone());
+                        if resp.has_region_error() || resp.has_error() {
+                            // TODO return
+                        }
+                        Ok(transaction_write_resp)
+                    });
+                } else {
+                    commit_futures.push(f);
+                }
             }
-
-            let f2 = future::join_all(fs2);
-
-            let f = Future::join(f1, f2).and_then(|(pre_write_resps, commit_resps)| {
-                let mut res = TransactionWriteResponse::default();
-                res.set_pre_write_resps(protobuf::RepeatedField::from_vec(pre_write_resps));
-                res.set_commit_resps(protobuf::RepeatedField::from_vec(commit_resps));
-                sink.success(res).map_err(Error::from)
-            }).map_err(|_| {});
-
-            ctx.spawn(f)
-        ***********/
+            ctx.spawn(sink.success(transaction_write_resp)
+                    .map_err(|e| {
+                        warn!("proxy commit sends response fail: {:?}", e);
+                    })
+                    .map(|_| {
+                        info!("proxy commit sends response success");
+                    }));
     }
 }
