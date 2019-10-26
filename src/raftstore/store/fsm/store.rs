@@ -445,7 +445,7 @@ impl<'a, T: Transport, C: PdClient> StoreFsmDelegate<'a, T, C> {
         self.register_cleanup_import_sst_tick();
         self.register_compact_check_tick();
         self.register_pd_store_heartbeat_tick();
-        self.register_get_all_stores_tick();
+        // self.register_get_all_stores_tick();
         self.register_compact_lock_cf_tick();
         self.register_snap_mgr_gc_tick();
         self.register_consistency_check_tick();
@@ -702,11 +702,20 @@ pub struct RaftPollerBuilder<T, C> {
     applying_snap_count: Arc<AtomicUsize>,
 }
 
-impl<T, C> RaftPollerBuilder<T, C> {
+impl<T, C: PdClient> RaftPollerBuilder<T, C> {
     /// Initialize this store. It scans the db engine, loads all regions
     /// and their peers from it, and schedules snapshot worker if necessary.
     /// WARN: This store should not be used before initialized.
     fn init(&mut self) -> Result<Vec<(LooseBoundedSender<PeerMsg>, Box<PeerFsm>)>> {
+        if let Ok(mut stores) = self.pd_client.get_all_stores(true) {
+            info!("XXXXXXXXXXXXXXX get_all_stores: {:?}", stores);
+            let mut meta = self.store_meta.lock().unwrap();
+            meta.store_location = stores
+                .drain(..)
+                .map(|s| (s.id, s.region))
+                .collect::<HashMap<u64, String>>();
+        }
+
         // Scan region meta to get saved regions.
         let start_key = keys::REGION_META_MIN_KEY;
         let end_key = keys::REGION_META_MAX_KEY;
@@ -1752,12 +1761,14 @@ impl<'a, T: Transport, C: PdClient> StoreFsmDelegate<'a, T, C> {
 
     fn on_get_all_stores(&mut self) {
         if let Ok(mut stores) = self.ctx.pd_client.get_all_stores(true) {
+            info!("get_all_stores: {:?}", stores);
             let mut guard = self.ctx.store_meta.lock().unwrap();
             guard.store_location = stores
                 .drain(..)
                 .map(|s| (s.id, s.region))
                 .collect::<HashMap<u64, String>>();
         }
+        // self.register_get_all_stores_tick();
     }
 
     fn register_snap_mgr_gc_tick(&self) {

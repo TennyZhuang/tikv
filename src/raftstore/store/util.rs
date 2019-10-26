@@ -54,10 +54,9 @@ pub fn group_peers_by_store_location(
         }
     }
     for (peer, store_id) in peers {
-        if let Some(location) = locations.get(store_id) {
-            let peers = tmp.get_mut(location).unwrap();
-            peers.push(*peer);
-        }
+        let location = locations.get(store_id).unwrap();
+        let peers = tmp.get_mut(location).unwrap();
+        peers.push(*peer);
     }
     let mut entires = tmp.drain().collect::<Vec<_>>();
     entires.sort_by(|a, b| a.0.cmp(&b.0));
