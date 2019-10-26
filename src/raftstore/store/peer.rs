@@ -369,7 +369,10 @@ impl Peer {
             let store_id = p.store_id;
             if locations.get(&store_id).is_none() {
                 let mut stores = pd_client.get_all_stores(true).unwrap();
-                let new_locations = stores.drain(..).map(|store| (store.id, store.region)).collect::<HashMap<_, _>>();
+                let new_locations = stores
+                    .drain(..)
+                    .map(|store| (store.id, store.region))
+                    .collect::<HashMap<_, _>>();
                 locations = new_locations;
             }
             peers.push((peer_id, store_id));
@@ -828,7 +831,7 @@ impl Peer {
                     );
                 }
                 MessageType::MsgBroadcast => {
-                    info!(
+                    debug!(
                         "[follower replication]send MsgBroadcastResp";
                         "region_id" => self.region_id,
                         "peer" => &self.tag,

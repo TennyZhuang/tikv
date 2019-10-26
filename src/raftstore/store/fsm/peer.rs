@@ -154,14 +154,7 @@ impl PeerFsm {
             tx,
             Box::new(PeerFsm {
                 peer: Peer::new::<C>(
-                    store_id,
-                    store_meta,
-                    cfg,
-                    sched,
-                    engines,
-                    region,
-                    meta_peer,
-                    pd,
+                    store_id, store_meta, cfg, sched, engines, region, meta_peer, pd,
                 )?,
                 tick_registry: PeerTicks::empty(),
                 missing_ticks: 0,
@@ -202,14 +195,7 @@ impl PeerFsm {
             tx,
             Box::new(PeerFsm {
                 peer: Peer::new::<C>(
-                    store_id,
-                    store_meta,
-                    cfg,
-                    sched,
-                    engines,
-                    &region,
-                    peer,
-                    pd_client,
+                    store_id, store_meta, cfg, sched, engines, &region, peer, pd_client,
                 )?,
                 tick_registry: PeerTicks::empty(),
                 missing_ticks: 0,
@@ -1514,13 +1500,17 @@ impl<'a, T: Transport, C: PdClient> PeerFsmDelegate<'a, T, C> {
             let mut store_meta = self.ctx.store_meta.lock().unwrap();
             // Region have been updated in exec_change_peer
             let mut peers = Vec::new();
-            let mut locations = ::std::mem::replace(&mut store_meta.store_location, HashMap::default());
+            let mut locations =
+                ::std::mem::replace(&mut store_meta.store_location, HashMap::default());
             for p in cp.region.get_peers().iter() {
                 let peer_id = p.id;
                 let store_id = p.store_id;
                 if locations.get(&store_id).is_none() {
                     let mut stores = self.ctx.pd_client.get_all_stores(true).unwrap();
-                    let new_locations = stores.drain(..).map(|store| (store.id, store.region)).collect::<HashMap<_, _>>();
+                    let new_locations = stores
+                        .drain(..)
+                        .map(|store| (store.id, store.region))
+                        .collect::<HashMap<_, _>>();
                     locations = new_locations;
                 }
                 peers.push((peer_id, store_id));
@@ -1532,8 +1522,7 @@ impl<'a, T: Transport, C: PdClient> PeerFsmDelegate<'a, T, C> {
                 .iter()
                 .map(|peer| (peer.id, peer.store_id))
                 .collect::<Vec<_>>();
-            
-            
+
             let inner = util::group_peers_by_store_location(&peers, &store_meta.store_location);
             GroupsConfig::new(inner, group_config.strategy())
         };
