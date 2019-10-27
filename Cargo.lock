@@ -2079,7 +2079,7 @@ dependencies = [
 [[package]]
 name = "raft"
 version = "0.6.0-alpha"
-source = "git+https://github.com/Fullstop000/raft-rs?branch=follower_replication#a3a12308715a00f4e948503b821821f8be762908"
+source = "git+https://github.com/Fullstop000/raft-rs?branch=follower_replication#7f48f3da0dd98640f34d9702222dbdf1d02649bc"
 dependencies = [
  "getset",
  "hashbrown",
@@ -2103,7 +2103,7 @@ replace = "raft 0.6.0-alpha (git+https://github.com/Fullstop000/raft-rs?branch=f
 [[package]]
 name = "raft-proto"
 version = "0.6.0-alpha"
-source = "git+https://github.com/Fullstop000/raft-rs?branch=follower_replication#a3a12308715a00f4e948503b821821f8be762908"
+source = "git+https://github.com/Fullstop000/raft-rs?branch=follower_replication#7f48f3da0dd98640f34d9702222dbdf1d02649bc"
 dependencies = [
  "protobuf 2.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "protobuf-build",
