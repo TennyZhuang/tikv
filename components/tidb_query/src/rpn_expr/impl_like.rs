@@ -16,7 +16,7 @@ pub fn like(
     match (target, pattern, escape) {
         (Some(target), Some(pattern), Some(escape)) => {
             Ok(Some(
-                expr_util::like::like(target.as_slice(), pattern.as_slice(), *escape as u32, 0)?
+                expr_util::like::like_regexp(target.as_slice(), pattern.as_slice(), *escape as u32, 0)?
                     as i64,
             ))
         }

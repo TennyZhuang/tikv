@@ -86,3 +86,32 @@ pub fn like(target: &[u8], pattern: &[u8], escape: u32, recurse_level: usize) ->
         }
     }
 }
+
+pub fn like_regexp(target: &[u8], pattern: &[u8], escape: u32, _recurse_level: usize) -> Result<bool> {
+    let mut pcs = pattern.iter();
+    let mut res = String::from("^");
+    loop {
+        match pcs.next().cloned() {
+            Some(b'%') => res.push_str(".*"),
+            Some(b'_') => res.push('.'),
+            Some(mut c) => {
+                if c as u32 == escape {
+                    let next = pcs.next().map_or(escape as u8, |&c| u8::from(c));
+                    c = next;
+                }
+                let mut s = String::new();
+                s.push(c as char);
+                res.push_str(&regex::escape(&s));
+            }
+            None => break,
+        };
+    }
+    res.push('$');
+    println!("from: {} to: {}", std::str::from_utf8(pattern).unwrap(), res);
+    let reg = regex::Regex::new(&res).unwrap();
+
+    // let pattern = String::from_utf8_lossy(pattern);
+    // let pattern = pattern.replace("_", "?").replace("%", ".*").replace("?", "\\?").replace(from: P, to: &str);
+    // let reg = regex::Regex::new(&pattern).unwrap();
+    Ok(reg.is_match(std::str::from_utf8(target).unwrap()))
+}
