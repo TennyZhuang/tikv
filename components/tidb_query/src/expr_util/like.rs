@@ -110,8 +110,5 @@ pub fn like_regexp(target: &[u8], pattern: &[u8], escape: u32, _recurse_level: u
     println!("from: {} to: {}", std::str::from_utf8(pattern).unwrap(), res);
     let reg = regex::Regex::new(&res).unwrap();
 
-    // let pattern = String::from_utf8_lossy(pattern);
-    // let pattern = pattern.replace("_", "?").replace("%", ".*").replace("?", "\\?").replace(from: P, to: &str);
-    // let reg = regex::Regex::new(&pattern).unwrap();
     Ok(reg.is_match(std::str::from_utf8(target).unwrap()))
 }
