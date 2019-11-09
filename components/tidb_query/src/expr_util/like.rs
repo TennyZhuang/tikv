@@ -107,7 +107,6 @@ pub fn like_regexp(target: &[u8], pattern: &[u8], escape: u32, _recurse_level: u
         };
     }
     res.push('$');
-    println!("from: {} to: {}", std::str::from_utf8(pattern).unwrap(), res);
     let reg = regex::Regex::new(&res).unwrap();
 
     Ok(reg.is_match(std::str::from_utf8(target).unwrap()))
